@@ -54,6 +54,20 @@ def sift_substrates(f: str) -> Tuple[str, str, str]:
             return s.pop(0), None, "<br><br>".join(s)
 
 
+def test(front: str, back: str) -> None:
+    stemmer = snowballstemmer.stemmer("english")
+    word, pronoun, ex = sift_substrates(back)
+    stem: str = stemmer.stemWord(word)
+    print(
+        f"""
+    word: {word}
+    pronoun: {pronoun}
+    ex: {ex}
+    stem: {stem}
+    """
+    )
+
+
 # We're going to add a menu item below. First we want to create a function to
 # be called when the menu item is activated.
 def update_deck() -> None:
@@ -79,26 +93,30 @@ def update_deck() -> None:
 
         stem: str = stemmer.stemWord(word)
 
-
         if re_invalid_char.search(stem):
             continue
 
         print(stem, end="\n")
+
         ex, n = re.subn(
             re.compile(f"(?i)({stem})"), lambda m: f"{{{{c1::{m[0]}}}}}", ex
         )
 
         if n == 0:
-            continue
+            # try again with the word, as sometimes the stemming adds an extra
+            # character to the word, e.g. musing -> muse
+            ex, n = re.subn(
+                re.compile(f"(?i)({word})"), lambda m: f"{{{{c1::{m[0]}}}}}", ex
+            )
+            if n == 0:
+                continue
         # create a new card which includes the front + brbr + paragraphs
         # (matched words replaced with fuzzy-matched word clozed), and back,
         # with paragraphs and words replaced
 
         note_backend = note._to_backend_note()
         note_backend.notetype_id = model_cloze
-        note_backend.fields[
-            0
-        ] = f'{note.fields[0]}<br><br>{ex}'
+        note_backend.fields[0] = f"{note.fields[0]}<br><br>{ex}"
         note_backend.fields[1] = pronoun if pronoun else ""
         note._load_from_backend_note(note_backend)
 
@@ -109,9 +127,20 @@ def update_deck() -> None:
     showInfo(f"Successfully updated {u_count} cards.")
 
 
-# create a new menu item, "test"
+# create a new menu item, "refactor"
 action = QAction("Refactor", mw)
 # set it to call testFunction when it's clicked
 qconnect(action.triggered, update_deck)
 # and add it to the tools menu
 mw.form.menuTools.addAction(action)
+
+# create a new menu item, test
+action_t = QAction("Test", mw)
+qconnect(
+    action_t.triggered,
+    lambda: test(
+        "a period of reflection or thought",
+        "musing<br><br>Either dialogue-heavy scenes of political argument, philosophical musing, and characters’ self-conscious descriptions of their emotions; or lush production design and photography or musical scores to pleasure the audience’s senses: THE ENGLISH PATIENT.",
+    ),
+)
+mw.form.menuTools.addAction(action_t)
