@@ -32,115 +32,140 @@ def debug_add(d) -> None:
     mw.col.update_note(note)
 
 
-# try to find word, pronoun, and example from back field
-def sift_substrates(f: str) -> Tuple[str, str, str]:
-    s = f.split("<br><br>")
 
-    if s[0].find("<br>") != -1:
-        # declare doubled word
-        if len(s) == 1:
-            t = s[0].split("<br>")
-            return t[0], t[1], None
+class Program:
+    def __init__(self):
+        self.stemmer = snowballstemmer.stemmer("english")
+        self.re_invalid_char = re.compile(r"[\(\\\)\[\]]")
+        # try to find word, pronoun, and example from back field
+    def sift_substrates(f: str) -> Tuple[str, str, str]:
+        s = f.split("<br><br>")
+
+        if s[0].find("<br>") != -1:
+            # declare doubled word
+            if len(s) == 1:
+                t = s[0].split("<br>")
+                return t[0], t[1], None
+            else:
+                t = s[0].split("<br>")
+                s.pop(0)
+
+                return t[0], t[1], "<br><br>".join(s)
         else:
-            t = s[0].split("<br>")
-            s.pop(0)
+            # declare single word
+            if len(s) == 1:
+                return s[0], None, None
+            else:
+                return s.pop(0), None, "<br><br>".join(s)
+    def process(self, word: str, ex: str) -> str:
+        stem: str = self.stemmer.stemWord(word)
+        # ensure our stem actually has a valid form
+        if self.re_invalid_char.search(stem):
+            return
 
-            return t[0], t[1], "<br><br>".join(s)
-    else:
-        # declare single word
-        if len(s) == 1:
-            return s[0], None, None
-        else:
-            return s.pop(0), None, "<br><br>".join(s)
+        # first try to stem everything
+        words = ex.split()
+        words_stemmed: list[str] = self.stemmer.stemWords(words)
 
+        # find the index in which stem matches word
+        
+        # a full word is in the form ab
+        try: 
+            # may fail if the word isn't in there
+            w_ex = words[words_stemmed.index(stem)]
+            w_long, w_short = (lambda : (w_ex, stem) if len(w_ex) > len(stem) else (stem, w_ex))()
 
-def test(front: str, back: str) -> None:
-    stemmer = snowballstemmer.stemmer("english")
-    word, pronoun, ex = sift_substrates(back)
-    stem: str = stemmer.stemWord(word)
-    print(
-        f"""
-    word: {word}
-    pronoun: {pronoun}
-    ex: {ex}
-    stem: {stem}
-    """
-    )
+            buf_a = ""
 
+            idx = 0
+            for i in range(len(w_short)):
+                if w_long[i] != w_short[i]:
+                    break
+                else:
+                    buf_a += w_long[i]
+                    idx += 1
 
-# We're going to add a menu item below. First we want to create a function to
-# be called when the menu item is activated.
-def update_deck() -> None:
-    stemmer = snowballstemmer.stemmer("english")
+            buf_b = w_long[idx:]
 
-    u_count = 0
-    # get the **currently selected deck**
-    d = mw.col.decks.current()
-    d_name = d.get("name")
+            replacement = "{{c1::" + buf_a + "}}" + buf_b
 
-    # for each **basic note** in selected deck, traverse **every field**
-    model_cloze = mw.col.models.id_for_name("Cloze")
+            return ex.replace(w_ex, replacement)
+        except:
+            return None
+        
+    def run(self):
+        u_count = 0
+        # get the **currently selected deck**
+        d = mw.col.decks.current()
+        d_name = d.get("name")
 
-    re_invalid_char = re.compile(r"[\(\\\)\[\]]")
+        # for each **basic note** in selected deck, traverse **every field**
+        model_cloze = mw.col.models.id_for_name("Cloze")
 
-    for id in mw.col.find_notes(f"deck:{d_name} AND note:basic"):
-        note = mw.col.get_note(id)
+        for id in mw.col.find_notes(f"deck:{d_name} AND note:basic"):
+            note = mw.col.get_note(id)
 
-        word, pronoun, ex = sift_substrates(note.fields[1])
-        print(f"[{word}]\n[{pronoun}]\n[{ex}]\n")
-        if not ex:
-            continue
+            word, pronoun, ex = Program.sift_substrates(note.fields[1])
 
-        stem: str = stemmer.stemWord(word)
-
-        if re_invalid_char.search(stem):
-            continue
-
-        print(stem, end="\n")
-
-        ex, n = re.subn(
-            re.compile(f"(?i)({stem})"), lambda m: f"{{{{c1::{m[0]}}}}}", ex
-        )
-
-        if n == 0:
-            # try again with the word, as sometimes the stemming adds an extra
-            # character to the word, e.g. musing -> muse
-            ex, n = re.subn(
-                re.compile(f"(?i)({word})"), lambda m: f"{{{{c1::{m[0]}}}}}", ex
-            )
-            if n == 0:
+            if not ex:
                 continue
-        # create a new card which includes the front + brbr + paragraphs
-        # (matched words replaced with fuzzy-matched word clozed), and back,
-        # with paragraphs and words replaced
 
-        note_backend = note._to_backend_note()
-        note_backend.notetype_id = model_cloze
-        note_backend.fields[0] = f"{note.fields[0]}<br><br>{ex}"
-        note_backend.fields[1] = pronoun if pronoun else ""
-        note._load_from_backend_note(note_backend)
+            # we currently have word, pronoun, ex, and stem
+            ex = self.process(word, ex)
 
-        mw.col.update_note(note)
-        # increment the number of cards to collection so we don't have to quit
-        u_count += 1
-    debug_add(d)
-    showInfo(f"Successfully updated {u_count} cards.")
+            if not ex:
+                continue
 
+            print(ex)
+            print("--------------------------")
 
-# create a new menu item, "refactor"
+            # create a new card which includes the front + brbr + paragraphs
+            # (matched words replaced with fuzzy-matched word clozed), and back,
+            # with paragraphs and words replaced
+
+            note_backend = note._to_backend_note()
+            note_backend.notetype_id = model_cloze
+            note_backend.fields[0] = f"{note.fields[0]}<br><br>{ex}"
+            note_backend.fields[1] = pronoun if pronoun else ""
+            note._load_from_backend_note(note_backend)
+
+            mw.col.update_note(note)
+            # increment the number of cards to collection so we don't have to quit
+            u_count += 1
+        debug_add(d)
+        showInfo(f"Successfully updated {u_count} cards.")
+
+def main():
+    program = Program()
+    program.run()
+
+# # create a new menu item, "refactor"
 action = QAction("Refactor", mw)
 # set it to call testFunction when it's clicked
-qconnect(action.triggered, update_deck)
+qconnect(action.triggered, main)
 # and add it to the tools menu
 mw.form.menuTools.addAction(action)
 
+
+def test(back: str):
+    program = Program()
+    word, pronoun, ex = Program.sift_substrates(back)
+    
+    if not ex:
+        return
+
+    # we currently have word, pronoun, ex, and stem
+    ex = program.process(word, ex)
+
+    if not ex:
+        return
+
+    print(f"{word}  {pronoun}  {ex}")
+    
 # create a new menu item, test
 action_t = QAction("Test", mw)
 qconnect(
     action_t.triggered,
-    lambda: test(
-        "a period of reflection or thought",
-        "musing<br><br>Either dialogue-heavy scenes of political argument, philosophical musing, and characters’ self-conscious descriptions of their emotions; or lush production design and photography or musical scores to pleasure the audience’s senses: THE ENGLISH PATIENT.",
-    ),
+    lambda : test("brace<br><br>Glancing over, he saw Tasukete had lowered his posture and was bracing himself. If he’d been carrying a weapon, Tasukete would likely have drawn it like Haruhiro had.")
 )
 mw.form.menuTools.addAction(action_t)
